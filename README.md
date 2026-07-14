@@ -1,12 +1,30 @@
-# Prediksi TMA — Bengawan Solo (Pipeline Lokal)
+# Prediksi TMA — Bengawan Solo (Sebelas Maret Statistics Data Science 2026)
+
+Pipeline prediksi Tinggi Muka Air (TMA) untuk 30 pos pemantauan di DAS
+Bengawan Solo, dikemas dalam satu notebook: **`tma_pipeline_notebook.ipynb`**.
+
+## Ringkasan pendekatan
+
+1. Agregasi fitur eksogen (cuaca/tanah/iklim per jam) menjadi fitur rolling 6h/24h/72h/168h
+2. Fitur hulu-hilir dari topologi sungai (HydroRIVERS) — TMA pos hulu sebagai prediktor pos hilir
+3. Fitur lag & rolling TMA per pos, dengan outlier capping ringan
+4. Model **LightGBM** (1 model global untuk 30 pos, `nama_pos` sebagai fitur kategorikal)
+5. **Recursive/autoregressive forecasting** untuk 8 bulan ke depan, dengan **Tukey-fence clipping** untuk mencegah drift
+6. Validasi yang jujur: simulasi recursive forecasting pada periode hold-out (bukan cuma one-step)
+
+**Hasil:**
+| Metode | RMSE recursive (validasi) |
+|---|---|
+| Tanpa clipping | 2.08 |
+| Dengan clipping | 1.54 |
+| Dengan clipping + fitur hulu-hilir | **1.47** |
+
+Skor leaderboard Kaggle: **1.66**
 
 ## 1. Struktur folder yang dibutuhkan
 
-Taruh 4 script ini **di luar** folder dataset kamu (atau di mana saja), lalu jalankan
-dengan `--data-dir` menunjuk ke folder dataset. Struktur dataset kamu:
-
 ```
-sebelas-maret-statistics-data-.../
+sebelas-maret-statistics-data-science-2026/
 ├── data_pendukung/
 │   ├── HydroRIVERS_v10_au_shp/
 │   ├── data_lingkungan.csv
@@ -14,10 +32,15 @@ sebelas-maret-statistics-data-.../
 │   └── koordinat_pos.csv
 ├── sample_submission.csv
 ├── test.csv
-└── train.csv
+├── train.csv
+├── tma_pipeline_notebook.ipynb
+├── requirements.txt
+└── README.md
 ```
 
-Ini sudah sesuai default script — tidak perlu diubah.
+> Dataset (`*.csv`, `data_pendukung/`, `output/`) sengaja di-gitignore dan
+> tidak ikut di-push ke repo ini — download manual dari halaman kompetisi
+> Kaggle dan taruh di lokasi di atas sebelum menjalankan notebook.
 
 ## 2. Setup environment
 
@@ -25,53 +48,59 @@ Ini sudah sesuai default script — tidak perlu diubah.
 python3 -m venv venv
 source venv/bin/activate      # Windows: venv\Scripts\activate
 pip install -r requirements.txt
+jupyter notebook
 ```
 
-## 3. Jalankan pipeline (urut, dari folder tempat script berada)
+## 3. Menjalankan notebook
 
-```bash
-DATA_DIR="/path/ke/sebelas-maret-statistics-data-..."
+Buka `tma_pipeline_notebook.ipynb`, lalu di **Bagian 0 (Setup)** sesuaikan path:
 
-python 01_build_exog_features.py     --data-dir "$DATA_DIR" --output-dir ./output
-python 02_build_lag_features.py      --data-dir "$DATA_DIR" --output-dir ./output
-python 03_train_and_predict.py       --output-dir ./output
-python 04_final_train_and_forecast.py --data-dir "$DATA_DIR" --output-dir ./output
+```python
+DATA_DIR = Path('.')            # folder dataset (berisi train.csv, test.csv, data_pendukung/)
+OUTPUT_DIR = Path('./output')   # folder untuk simpan file perantara & hasil
 ```
 
-Kalau kamu jalankan dari **dalam** folder dataset itu sendiri, cukup:
+Lalu **Run All**. Notebook akan jalan berurutan lewat semua tahap: EDA →
+fitur eksogen → fitur hulu-hilir → lag features → training → validasi
+recursive → training final → forecast → `submission.csv`.
 
-```bash
-python 01_build_exog_features.py --output-dir ./output
-python 02_build_lag_features.py --output-dir ./output
-python 03_train_and_predict.py --output-dir ./output
-python 04_final_train_and_forecast.py --output-dir ./output
-```
-(karena `--data-dir` default-nya `.`)
+**Estimasi waktu total:** ~15-20 menit (tahap paling lama: baca
+`data_lingkungan.csv` 155MB, dan recursive forecasting 726 timestamp).
 
-## 4. Output
+## 4. Struktur notebook
 
-Semua file perantara (`.parquet`, model `.txt`, `feature_cols.pkl`) dan
-`submission.csv` final akan tersimpan di folder `./output/`.
+| Bagian | Isi |
+|---|---|
+| 0 | Setup path & konfigurasi |
+| 1 | EDA singkat |
+| 2 | Fitur eksogen (agregasi cuaca/tanah/iklim) |
+| 3 | Fitur hulu-hilir (HydroRIVERS) |
+| 4 | Grid waktu penuh + lag features + outlier capping |
+| 5 | Training LightGBM + validasi one-step |
+| 6 | **Validasi recursive yang jujur** — kenapa validasi one-step menyesatkan |
+| 7 | Training final + forecast recursive + `submission.csv` |
+| 8 | Verifikasi submission sebelum submit ke Kaggle |
+| 9 | Kesimpulan & ide pengembangan lanjutan |
 
-## 5. Estimasi waktu & RAM
+## 5. Kenapa ada bagian "validasi recursive"?
 
-| Script | Yang dilakukan | Perkiraan waktu | Catatan RAM |
-|---|---|---|---|
-| `01` | Baca `data_lingkungan.csv` (155 MB), agregasi rolling per pos | 2–5 menit | Butuh ~2–4 GB RAM |
-| `02` | Bangun grid waktu penuh + capping outlier | <1 menit | Ringan |
-| `03` | Training LightGBM + validasi | 1–3 menit | Ringan |
-| `04` | Retrain + forecast rekursif 726 timestamp | 3–8 menit | Ringan |
+Evaluasi RMSE biasa (one-step, pakai lag dari data historis asli) **tidak**
+merepresentasikan performa asli, karena forecast ke test (8 bulan ke depan)
+dilakukan **recursive**: prediksi langkah `t` dipakai sebagai lag untuk
+memprediksi langkah `t+1`, dst. Error bisa menumpuk ("drift"), terutama untuk
+pos dengan variansi historis sangat kecil (near-konstan, misal `Lorog`).
+Bagian 6 di notebook mensimulasikan proses recursive yang sama pada periode
+yang nilai aslinya kita tahu, sehingga RMSE yang dilaporkan jujur — dan
+otomatis menguji apakah **Tukey-fence clipping** (`[Q1 - k*IQR, Q3 + k*IQR]`
+per pos) membantu redam drift tersebut.
 
-Kalau RAM laptop kamu terbatas (<8GB) dan script `01` lambat/crash, kabari saya —
-bisa dioptimasi jadi chunked reading.
+## 6. Yang masih perlu diperbaiki
 
-## 6. Parameter yang bisa diubah
+Pos dengan RMSE recursive tertinggi yang **tidak** terpengaruh clipping
+maupun fitur hulu-hilir (kemungkinan butuh investigasi/fitur tambahan):
+`Bojonegoro - Kali Kethek`, `Wonogiri Dam`, `Cepu`, `Jurug`.
 
-- `03_train_and_predict.py --val-cutoff 2025-05-19` — ubah tanggal potong validasi
-- `03_train_and_predict.py --num-boost-round 3000 --early-stopping 100` — tuning training
-- `04_final_train_and_forecast.py --num-boost-round N` — override jumlah round training final (default: pakai `best_iteration` dari script 03)
-
-## 7. Hasil baseline saat ini
-
-- Validation RMSE (holdout Mei–Sep 2025): **~0.27** (skala campuran 30 pos)
-- Pos dengan error terbesar: `Bojonegoro - Kali Kethek`, `Brangkal`, `Kedungupit`
+Ide pengembangan lanjutan lainnya: hyperparameter tuning (Optuna), model
+terpisah per pos vs global, arsitektur LSTM/GNN untuk memodelkan 30 pos
+sebagai graf sungai, blending prediksi dengan persistence/exponential
+smoothing untuk redam drift lebih halus daripada hard clipping.
