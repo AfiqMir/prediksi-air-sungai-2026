@@ -19,6 +19,9 @@ kompetisi, dan koreksi state terakhir yang meluruh terhadap horizon prediksi.
 - File kandidat submission saat ini dihasilkan sebagai
   `output_catboost_experiments/submission_rmse_anchor.csv`.
 - Skor leaderboard untuk kandidat CatBoost terbaru belum dicatat di repositori.
+- Estimasi `API_TEST` terbaik yang tercatat tetap **1,5926** dari station-stack;
+  eksperimen recency-weighted terbaru ditolak karena estimasinya memburuk menjadi
+  **1,6144** walaupun OOF lokal membaik.
 
 > Metrik LightGBM dan CatBoost berasal dari skema validasi yang berbeda, jadi
 > angka keduanya tidak sepenuhnya apple-to-apple. Perbandingan utama untuk
@@ -108,6 +111,67 @@ Blend yang dituning hanya pada fold terbaru memang memperbaiki fold
 `sep_2024`, dari 1,2377 menjadi 1,2027, tetapi memburukkan `sep_2023` dan pooled
 RMSE. Karena itu blend tersebut dianggap eksperimental dan tidak dipilih sebagai
 submission utama.
+
+### 5. Eksperimen direct LightGBM residual
+
+`run_lightgbm_residual_experiment.py` memakai feature table dan empat fold yang
+sama dengan CatBoost. Baseline musiman `nama_pos x bulan x jam` dihitung hanya
+dari bagian train setiap fold, lalu LightGBM memprediksi residual secara direct.
+Residual mentah mengungguli residual yang diskalakan, tetapi masih kalah dari
+CatBoost-anchor sebagai model tunggal:
+
+| Model | Mean RMSE 4 fold | Pooled RMSE |
+|---|---:|---:|
+| CatBoost RMSE + state anchor | **1,4466** | 1,6144 |
+| LightGBM raw residual | 1,5550 | 1,7045 |
+| LightGBM scaled residual | 1,5645 | 1,7145 |
+
+Walaupun demikian, optimum pooled OOF memberi bobot 13,60% LightGBM dan 86,40%
+CatBoost. Blend ini mencapai mean fold RMSE 1,4390 dan pooled RMSE 1,6121. Fold
+`sep_2023` memburuk 0,0064, sehingga kandidat ini tetap lebih agresif daripada
+aturan seleksi konservatif yang memilih 100% CatBoost.
+
+Pada evaluator `API_TEST`, blend memperoleh RMSE API 0,8448 dan estimasi RMSE
+kompetisi 1,5931, dibanding estimasi 1,6025 untuk CatBoost-anchor. Kalibrasi API
+hanya berdasarkan tujuh submission dengan residual RMSE 0,01482, sehingga hasil
+ini diperlakukan sebagai estimasi, bukan pengganti skor leaderboard.
+
+### 6. Eksperimen station-aware anchor dan local trend
+
+`run_station_aware_experiment.py` menguji anchor yang di-shrink per pos, Ridge
+residual lokal dengan tren waktu, dan stacking CatBoost-LightGBM. Station anchor
+memperbaiki seluruh fold dan menurunkan pooled OOF dari 1,6144 menjadi 1,6092.
+Ridge lokal tidak kompetitif dan mendapat bobot akhir 0%. Stack OOF terpilih
+adalah 81% station-anchor dan 19% LightGBM, dengan pooled RMSE 1,6083.
+
+Pada `API_TEST`, stack tersebut memperoleh RMSE API 0,8439 dan estimasi kompetisi
+**1,5926**. Bobot LightGBM per pos tampak lebih baik di OOF (1,6054), tetapi
+memburuk menjadi estimasi 1,5966 di API_TEST sehingga ditolak sebagai
+meta-overfit. Target estimasi 1,56 belum tercapai.
+
+### 7. Eksperimen CatBoost recency-weighted
+
+`run_catboost_recency_experiment.py` menguji apakah data terbaru perlu diberi
+bobot lebih besar untuk menghadapi perubahan pola antarperiode. Empat expert
+diuji pada rolling-origin fold yang sama: exponential half-life 180, 365, dan
+730 hari, serta jendela keras 540 hari. Koreksi station-anchor dibuat identik
+dengan kontrol agar perubahan yang diukur hanya berasal dari recency weighting.
+
+Varian standalone terbaik adalah half-life 180 hari. Seleksi OOF konservatif
+memilih blend 81% expert tersebut dan 19% station-anchor kontrol:
+
+| Model | Mean RMSE 4 fold | Pooled RMSE | Estimasi API_TEST |
+|---|---:|---:|---:|
+| Station-anchor kontrol | 1,4395 | 1,6092 | 1,6053 |
+| Half-life 180 hari | 1,4294 | 1,6065 | 1,6185 |
+| Blend recency terpilih | **1,4288** | **1,6053** | 1,6144 |
+| Station-stack sebelumnya | 1,4323 | 1,6083 | **1,5926** |
+
+Blend recency memperbaiki tiga fold, tetapi memburukkan `sep_2023` sebesar
+0,0077. Pada `API_TEST`, RMSE API-nya 0,8871 dan estimasi kompetisinya 1,6144,
+lebih buruk daripada station-anchor maupun station-stack. Kandidat ini ditolak:
+peningkatan OOF tidak berpindah ke periode test dan memberi bukti bahwa recency
+weighting agresif tidak cukup stabil untuk submission utama.
 
 ## Ringkasan hasil CatBoost
 

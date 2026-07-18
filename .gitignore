@@ -5,6 +5,9 @@ output/
 output_v2/
 output_blend/
 output_catboost_experiments/
+output_catboost_recency/
+output_lightgbm_residual/
+output_station_aware/
 catboost_info/
 __pycache__/
 *.py[cod]
