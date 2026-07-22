@@ -12,6 +12,8 @@ output_time_forward_bias/
 output_global_local_hybrid/
 output_state_space/
 output_station_supermodel/
+output_extratrees_residual/
+output_station_shrunk_recency/
 catboost_info/
 __pycache__/
 *.py[cod]

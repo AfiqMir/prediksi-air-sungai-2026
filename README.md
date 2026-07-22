@@ -258,6 +258,41 @@ verifikasi. Sesudah freeze, satu kali evaluasi menghasilkan RMSE API 0,845825 da
 estimasi kompetisi 1,593575, lebih buruk 0,000958 daripada station-stack. Tidak
 ada retuning; keputusan akhir tetap mempertahankan station-stack kontrol.
 
+### 12. Eksperimen ExtraTrees residual
+
+`run_extratrees_residual_experiment.py` melatih ExtraTrees direct pada residual
+baseline musiman train-only. Dua konfigurasi regularisasi yang sudah
+dipra-deklarasikan diuji dengan fitur numerik terimputasi dan fitur kategorikal
+one-hot. Konfigurasi terbaik (`diverse_leaf_3`) tetap tidak kompetitif:
+
+| Model | Mean RMSE 4 fold | Pooled RMSE | Keputusan |
+|---|---:|---:|---|
+| Station-stack kontrol | **1,43235** | **1,60829** | Kontrol |
+| ExtraTrees residual | 1,57993 | 1,72432 | Ditolak |
+| Blend station-stack–ExtraTrees | 1,43235 | 1,60829 | Bobot ExtraTrees 0% |
+
+Seleksi blend dan seluruh audit leave-one-fold-out memilih bobot 0%, sehingga
+ExtraTrees tidak memberi error yang cukup beragam untuk memperbaiki kontrol.
+Tidak ada kandidat yang dibekukan dan `API_TEST` tidak dijalankan.
+
+### 13. Supermodel bobot recency per pos yang di-shrink
+
+`run_station_shrunk_recency_supermodel.py` mengganti hard routing supermodel
+dengan bobot recency kontinu per pos. Bobot SSE-optimal dipelajari hanya dari
+OOF meta-training, dibatasi maksimum 50%, lalu di-shrink 50% ke station-stack;
+bobot akhir maksimum adalah 25% recency.
+
+| Model | Mean RMSE 4 fold | Pooled RMSE | Worst fold delta |
+|---|---:|---:|---:|
+| Station-stack kontrol | 1,43235 | 1,60829 | — |
+| Supermodel recency LOFO | **1,43027** | **1,60707** | +0,000187 |
+
+Tiga fold membaik dan kenaikan pada `sep_2023` masih di bawah toleransi
+pra-deklarasi +0,001. Bobot final nonzero pada 23 pos dengan rata-rata 17,57%
+dan maksimum 25%. Setelah kandidat dibekukan, satu kali verifikasi menghasilkan
+RMSE API 0,850800 dan estimasi kompetisi 1,596043, lebih buruk 0,003426 daripada
+station-stack. Tidak ada retuning; station-stack tetap kontrol.
+
 ## Ringkasan hasil CatBoost
 
 | Model | Mean RMSE 4 fold | Pooled RMSE | Keputusan |
@@ -360,21 +395,40 @@ Eksperimen shrunken station supermodel:
 python run_station_supermodel_experiment.py
 ```
 
+Eksperimen ExtraTrees residual:
+
+```bash
+python run_extratrees_residual_experiment.py
+```
+
+Supermodel bobot recency per pos:
+
+```bash
+python run_station_shrunk_recency_supermodel.py
+```
+
 ## Rencana eksperimen berikutnya
 
 ### Eksperimen yang sudah diselesaikan
 
-Direct LightGBM residual, global/local station hybrid, state-space per pos, dan
-shrunken station supermodel sudah dijalankan. Model lokal non-linear hanya
-mendapat bobot 5% dan tidak lolos audit leave-one-fold-out. State-space blend
-juga gagal pada satu held-out fold. Supermodel konservatif lolos audit pra-API,
-tetapi peningkatannya kecil sehingga parameternya dibekukan tanpa tuning lanjutan.
+Direct LightGBM residual, global/local station hybrid, state-space per pos,
+shrunken station supermodel, dan ExtraTrees residual sudah dijalankan. Model
+lokal non-linear hanya mendapat bobot 5% dan tidak lolos audit
+leave-one-fold-out. State-space blend juga gagal pada satu held-out fold;
+ExtraTrees mendapat bobot blend 0% pada seluruh audit. Supermodel konservatif
+lolos audit pra-API, tetapi peningkatannya kecil sehingga parameternya dibekukan
+tanpa tuning lanjutan.
 
-### Prioritas 1 — ExtraTrees residual
+Supermodel bobot recency per pos adalah kandidat pra-API terbaru. Bobotnya
+dibentuk dan diaudit hanya dari OOF; parameter tidak akan dituning kembali
+berdasarkan hasil `API_TEST`.
 
-ExtraTrees dapat dicoba pada target residual untuk memperoleh model dengan error
-yang lebih beragam. Fokus utamanya bukan mengalahkan CatBoost secara standalone,
-tetapi memberi peningkatan saat di-blend berdasarkan OOF.
+### Prioritas 1 — Hipotesis residual yang lebih terarah
+
+Model tree residual generik (LightGBM dan ExtraTrees) belum memberi komponen
+blend yang stabil. Eksperimen berikutnya sebaiknya dimulai dari diagnosis error
+per pos, musim, dan horizon untuk merancang fitur atau target residual yang
+spesifik, bukan menambah algoritme generik lain.
 
 ### Eksperimen jangka lanjut
 
